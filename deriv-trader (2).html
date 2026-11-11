@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Deriv Trader</title>
+<style>
+:root{--bg:#eef2f6;--card:#fff;--ink:#14213d;--mute:#5d6b82;--line:#d5dce6;--acc:#2f5bea;--win:#1b8a5a;--loss:#c8372d;--zone:#e3e9fb}
+@media (prefers-color-scheme:dark){:root{--bg:#10192b;--card:#18233a;--ink:#e8eefb;--mute:#93a1ba;--line:#2a3855;--acc:#6f93ff;--win:#3ccf8e;--loss:#ff7a70;--zone:#22305a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+main{max-width:720px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}
+h1{font-size:20px;margin:0}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+h2{font-size:15px;margin:0 0 10px}
+label{display:block;font-size:13px;color:var(--mute);margin-bottom:4px}
+input,select,button{font:inherit;color:inherit;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:var(--card);width:100%}
+button{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc);font-weight:600}
+button.alt{background:var(--card);color:var(--ink);border-color:var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px}
+.top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.price{font-size:28px;font-weight:700}
+.muted{color:var(--mute);font-size:13px}
+.digits{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;align-items:end;height:130px}
+.d{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;border-radius:6px;font-size:12px;color:var(--mute);padding-bottom:2px}
+.d.zone{background:var(--zone)}
+.d.last{outline:2px solid var(--acc)}
+.bar{width:70%;background:var(--acc);border-radius:4px 4px 0 0;min-height:2px}
+.d b{color:var(--ink);font-size:14px}
+#log{max-height:220px;overflow:auto;font-size:13px}
+#log div{padding:5px 0;border-bottom:1px solid var(--line)}
+.w{color:var(--win)}.l{color:var(--loss)}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>My Deriv Trader</h1>
+  <div style="width:130px"><button id="authBtn">Log in with Deriv</button></div>
+</header>
+
+<section id="acctBox" class="hide">
+  <h2>Account</h2>
+  <div class="row">
+    <div><label for="acct">Account</label><select id="acct"></select></div>
+    <div><label>&nbsp;</label><button id="connectBtn">Connect</button></div>
+  </div>
+  <div class="muted">Balance: <b id="bal">–</b></div>
+</section>
+
+<section>
+  <div class="top">
+    <div><label for="sym" style="margin:0">Market</label>
+      <select id="sym">
+        <option value="R_10">Volatility 10</option><option value="R_25">Volatility 25</option>
+        <option value="R_50">Volatility 50</option><option value="R_75">Volatility 75</option>
+        <option value="R_100" selected>Volatility 100</option>
+        <option value="1HZ10V">Volatility 10 (1s)</option><option value="1HZ25V">Volatility 25 (1s)</option>
+        <option value="1HZ50V">Volatility 50 (1s)</option><option value="1HZ75V">Volatility 75 (1s)</option>
+        <option value="1HZ100V">Volatility 100 (1s)</option>
+      </select></div>
+    <div class="price" id="price">–</div>
+  </div>
+  <div class="digits" id="digits"></div>
+  <div class="muted" style="margin-top:8px">Share of the last 100 ticks by final digit. Shaded digits win for your chosen contract.</div>
+</section>
+
+<section>
+  <h2>Digits trade</h2>
+  <div class="row">
+    <div><label for="type">Contract</label>
+      <select id="type"><option value="DIGITOVER">Over</option><option value="DIGITUNDER">Under</option></select></div>
+    <div><label for="barrier">Barrier digit</label>
+      <select id="barrier"></select></div>
+    <div><label for="stake">Stake</label><input id="stake" type="number" min="0.35" step="0.01" value="1"></div>
+    <div><label for="count">Trades in a row</label><input id="count" type="number" min="1" max="50" value="1"></div>
+  </div>
+  <button id="tradeBtn" disabled>Place trade</button>
+  <div class="muted" id="status" style="margin-top:8px">Log in and connect an account to trade.</div>
+</section>
+
+<section>
+  <h2>Results</h2>
+  <div class="muted" style="margin-bottom:6px">Session profit: <b id="pnl">0.00</b></div>
+  <div id="log"></div>
+</section>
+</main>
+
+<script>
+// ---- Setup: register an OAuth app at developers.deriv.com and whitelist REDIRECT_URI exactly ----
+const CLIENT_ID = '34VEAtDL3KfdrO3WNRT2P';
+const REDIRECT_URI = location.origin + location.pathname;
+const AUTH_URL = 'https://auth.deriv.com/oauth2/auth';
+const TOKEN_URL = 'https://auth.deriv.com/oauth2/token';
+const API = 'https://api.derivws.com';
+const PUBLIC_WS = 'wss://api.derivws.com/trading/v1/options/ws/public';
+
+const $ = id => document.getElementById(id);
+const store = sessionStorage;
+let token = null, acctType = 'demo', currency = 'USD', pnl = 0, busy = false;
+
+// ---- OAuth 2.0 + PKCE ----
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function login(){
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  const state = crypto.randomUUID();
+  store.setItem('verifier', verifier); store.setItem('state', state);
+  const u = new URL(AUTH_URL);
+  u.search = new URLSearchParams({response_type:'code', client_id:CLIENT_ID, redirect_uri:REDIRECT_URI,
+    scope:'trade account_manage', state, code_challenge:challenge, code_challenge_method:'S256'});
+  location.href = u;
+}
+async function handleCallback(){
+  const p = new URLSearchParams(location.search);
+  if(!p.get('code')) return;
+  history.replaceState({}, '', REDIRECT_URI);
+  if(p.get('state') !== store.getItem('state')) return say('Login failed: state mismatch. Try again.');
+  const r = await fetch(TOKEN_URL, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:new URLSearchParams({grant_type:'authorization_code', client_id:CLIENT_ID, code:p.get('code'),
+      redirect_uri:REDIRECT_URI, code_verifier:store.getItem('verifier')})});
+  const j = await r.json();
+  if(!j.access_token) return say('Login failed: ' + (j.error_description || j.error || r.status));
+  store.setItem('token', j.access_token);
+  store.setItem('exp', Date.now() + (j.expires_in || 3600) * 1000);
+}
+function logout(){ store.clear(); location.href = REDIRECT_URI; }
+
+// ---- WebSocket helper with req_id matching ----
+function Sock(url, onMsg){
+  const s = {pend:{}, n:0};
+  s.ws = new WebSocket(url);
+  s.ready = new Promise(res => s.ws.onopen = res);
+  s.ws.onmessage = e => {
+    const d = JSON.parse(e.data), p = s.pend[d.req_id];
+    if(p){ delete s.pend[d.req_id]; d.error ? p.rej(d.error) : p.res(d); }
+    onMsg(d);
+  };
+  s.send = async obj => { await s.ready; return new Promise((res, rej) => {
+    const id = ++s.n; s.pend[id] = {res, rej}; s.ws.send(JSON.stringify({...obj, req_id:id})); }); };
+  return s;
+}
+
+// ---- Market data (public socket, no login needed) ----
+const ticks = []; let pub;
+function startPublic(){
+  pub = Sock(PUBLIC_WS, d => {
+    if(d.msg_type === 'history') d.history.prices.forEach(q => ticks.push(digitOf(q, d.pip_size)));
+    if(d.msg_type === 'tick'){ ticks.push(digitOf(d.tick.quote, d.tick.pip_size)); $('price').textContent = d.tick.quote; }
+    while(ticks.length > 100) ticks.shift();
+    drawDigits();
+  });
+  subscribeSymbol();
+}
+const digitOf = (q, pip) => +String(Number(q).toFixed(pip || 2)).slice(-1);
+async function subscribeSymbol(){
+  ticks.length = 0;
+  await pub.send({forget_all:'ticks'}).catch(()=>{});
+  pub.send({ticks_history:$('sym').value, count:100, end:'latest', style:'ticks'}).catch(()=>{});
+  pub.send({ticks:$('sym').value, subscribe:1}).catch(()=>{});
+}
+function drawDigits(){
+  const c = Array(10).fill(0); ticks.forEach(d => c[d]++);
+  const max = Math.max(...c, 1), t = $('type').value, b = +$('barrier').value, last = ticks[ticks.length-1];
+  $('digits').innerHTML = c.map((n, i) => {
+    const zone = t === 'DIGITOVER' ? i > b : i < b;
+    return `<div class="d${zone?' zone':''}${i===last?' last':''}"><b>${ticks.length?Math.round(n/ticks.length*100):0}%</b><div class="bar" style="height:${n/max*70}%"></div>${i}</div>`;
+  }).join('');
+}
+
+// ---- Authenticated trading socket ----
+let ws, watch = {};
+async function api(path, opts = {}){
+  const r = await fetch(API + path, {...opts, headers:{Authorization:'Bearer ' + token, ...(opts.headers||{})}});
+  if(r.status === 401){ say('Session expired. Log in again.'); logout(); }
+  return r.json();
+}
+async function loadAccounts(){
+  const j = await api('/trading/v1/options/accounts');
+  const list = j.data || [];
+  $('acct').innerHTML = list.map(a => `<option value="${a.account_id||a.id}" data-type="${a.account_type||''}">${a.account_id||a.id} (${a.account_type||'?'})</option>`).join('');
+  if(!list.length) say('No accounts returned. Check the app\u2019s scopes in the Deriv dashboard.');
+}
+async function connect(){
+  const opt = $('acct').selectedOptions[0]; if(!opt) return;
+  acctType = opt.dataset.type;
+  const j = await api(`/trading/v1/options/accounts/${opt.value}/otp`, {method:'POST'});
+  if(!j.data?.url) return say('Could not open a trading session.');
+  if(ws) ws.ws.close();
+  ws = Sock(j.data.url, d => {
+    if(d.msg_type === 'balance'){ currency = d.balance.currency; $('bal').textContent = d.balance.balance + ' ' + currency; }
+    if(d.msg_type === 'proposal_open_contract'){
+      const c = d.proposal_open_contract;
+      if(c.is_sold && watch[c.contract_id]){ watch[c.contract_id](c); delete watch[c.contract_id]; }
+    }
+  });
+  await ws.send({balance:1, subscribe:1});
+  $('tradeBtn').disabled = false; say('Connected (' + acctType + ').');
+}
+
+// ---- Trading: one trade, or several in a row ----
+async function tradeOnce(){
+  const stake = +$('stake').value;
+  const prop = await ws.send({proposal:1, amount:stake, basis:'stake', contract_type:$('type').value, currency,
+    duration:1, duration_unit:'t', underlying_symbol:$('sym').value, barrier:$('barrier').value});
+  const buy = await ws.send({buy:prop.proposal.id, price:stake});
+  const id = buy.buy.contract_id;
+  const done = new Promise(res => watch[id] = res);
+  ws.send({proposal_open_contract:1, contract_id:id, subscribe:1}).catch(()=>{});
+  const c = await done, p = +c.profit;
+  pnl += p; $('pnl').textContent = pnl.toFixed(2);
+  const row = document.createElement('div');
+  row.innerHTML = `<span class="${p>=0?'w':'l'}">${p>=0?'Won':'Lost'} ${Math.abs(p).toFixed(2)}</span> <span class="muted">${$('type').selectedOptions[0].text} ${$('barrier').value} on ${$('sym').value}</span>`;
+  $('log').prepend(row);
+}
+async function trade(){
+  if(busy) return;
+  if(acctType === 'real' && !confirm('This is a REAL account. Place this trade with real money?')) return;
+  busy = true; $('tradeBtn').disabled = true;
+  const n = Math.min(50, Math.max(1, +$('count').value || 1));
+  try{
+    for(let i = 1; i <= n; i++){ say(`Trade ${i} of ${n}\u2026`); await tradeOnce(); }
+    say('Done.');
+  }catch(e){ say('Stopped: ' + (e.message || JSON.stringify(e))); }
+  busy = false; $('tradeBtn').disabled = false;
+}
+const say = m => $('status').textContent = m;
+
+// ---- Start ----
+(async function init(){
+  $('barrier').innerHTML = [...Array(10).keys()].map(i => `<option${i===4?' selected':''}>${i}</option>`).join('');
+  ['type','barrier'].forEach(id => $('' + id).onchange = drawDigits);
+  $('sym').onchange = subscribeSymbol;
+  $('tradeBtn').onclick = trade; $('connectBtn').onclick = connect;
+  startPublic();
+  await handleCallback();
+  token = store.getItem('token');
+  if(token && Date.now() > +store.getItem('exp')){ store.clear(); token = null; }
+  if(token){
+    $('authBtn').textContent = 'Log out'; $('authBtn').className = 'alt'; $('authBtn').onclick = logout;
+    $('acctBox').classList.remove('hide'); await loadAccounts();
+  } else $('authBtn').onclick = login;
+})();
+</script>
+</body>
+</html>
